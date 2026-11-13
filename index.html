@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>오목 (Gomoku)</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #2b2b2b; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center;
+         font-family: "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif; color: #fff; }
+  canvas { max-width: 96vw; max-height: 80vh; touch-action: manipulation; cursor: pointer;
+           box-shadow: 0 6px 24px rgba(0,0,0,.4); border-radius: 6px; }
+  #status { font-size: 22px; margin: 14px 0 6px; }
+  #help { font-size: 13px; color: #bbb; margin-bottom: 10px; }
+  .btns button { font: inherit; font-size: 14px; padding: 6px 14px; margin: 0 4px;
+                 border: 0; border-radius: 6px; background: #555; color: #fff; cursor: pointer; }
+  .btns button:hover { background: #777; }
+</style>
+</head>
+<body>
+<canvas id="board"></canvas>
+<div id="status"></div>
+<div id="help">클릭: 착수 · U / Backspace: 무르기 · R: 새 게임</div>
+<div class="btns">
+  <button id="undoBtn">무르기</button>
+  <button id="resetBtn">새 게임</button>
+</div>
+
+<script>
+// ===============================================
+//  오목 (Gomoku) - JavaScript (Canvas) 버전
+//  Processing 버전(Omok.pde)과 같은 구조로 옮김
+// ===============================================
+const N = 15, CELL = 40, MARGIN = 40;
+const EMPTY = 0, BLACK = 1, WHITE = 2;
+const SIZE = MARGIN * 2 + CELL * (N - 1);
+
+const canvas = document.getElementById("board");
+const ctx = canvas.getContext("2d");
+const statusEl = document.getElementById("status");
+
+// 고해상도 화면에서 선명하게
+const dpr = window.devicePixelRatio || 1;
+canvas.width = SIZE * dpr;
+canvas.height = SIZE * dpr;
+canvas.style.width = SIZE + "px";
+canvas.style.height = SIZE + "px";
+ctx.scale(dpr, dpr);
+
+let board, turn, winner, isDraw, history, winStart, winEnd;
+let hover = null;   // 마우스가 가리키는 칸 {r, c}
+
+function resetGame() {
+  board = Array.from({ length: N }, () => Array(N).fill(EMPTY));
+  turn = BLACK;
+  winner = EMPTY;
+  isDraw = false;
+  history = [];
+  winStart = winEnd = null;
+  render();
+}
+
+// ------------------- 그리기 -------------------
+const gx = c => MARGIN + c * CELL;
+const gy = r => MARGIN + r * CELL;
+const inBoard = (r, c) => r >= 0 && r < N && c >= 0 && c < N;
+
+function circle(x, y, d) {
+  ctx.beginPath();
+  ctx.arc(x, y, d / 2, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function render() {
+  ctx.fillStyle = "rgb(222,184,135)";
+  ctx.fillRect(0, 0, SIZE, SIZE);
+  drawBoard();
+  drawStones();
+  drawHover();
+  drawWinLine();
+  updateStatus();
+}
+
+function drawBoard() {
+  ctx.strokeStyle = "rgb(60,60,60)";
+  ctx.lineWidth = 1;
+  for (let i = 0; i < N; i++) {
+    const p = MARGIN + i * CELL + 0.5;
+    ctx.beginPath();
+    ctx.moveTo(MARGIN, p); ctx.lineTo(MARGIN + CELL * (N - 1), p);   // 가로줄
+    ctx.moveTo(p, MARGIN); ctx.lineTo(p, MARGIN + CELL * (N - 1));   // 세로줄
+    ctx.stroke();
+  }
+  // 화점 (천원 + 4귀)
+  ctx.fillStyle = "rgb(40,40,40)";
+  for (const r of [3, 7, 11])
+    for (const c of [3, 7, 11])
+      if ((r === 7 && c === 7) || (r !== 7 && c !== 7)) circle(gx(c), gy(r), 7);
+}
+
+function drawStone(r, c, color, alpha) {
+  const x = gx(c), y = gy(r), d = CELL * 0.88;
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = "rgba(0,0,0,0.25)";      // 그림자
+  circle(x + 2, y + 2, d);
+  if (color === BLACK) {
+    ctx.fillStyle = "rgb(20,20,20)";
+    circle(x, y, d);
+    ctx.fillStyle = "rgba(90,90,90,0.6)";  // 하이라이트
+    circle(x - d * 0.18, y - d * 0.18, d * 0.25);
+  } else {
+    ctx.fillStyle = "rgb(245,245,245)";
+    circle(x, y, d);
+    ctx.strokeStyle = "rgb(150,150,150)";
+    ctx.beginPath(); ctx.arc(x, y, d / 2, 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawStones() {
+  for (let r = 0; r < N; r++)
+    for (let c = 0; c < N; c++)
+      if (board[r][c] !== EMPTY) drawStone(r, c, board[r][c], 1);
+
+  // 마지막 수 표시
+  if (history.length > 0) {
+    const [r, c] = history[history.length - 1];
+    ctx.fillStyle = "rgb(220,40,40)";
+    circle(gx(c), gy(r), 8);
+  }
+}
+
+function drawHover() {
+  if (winner !== EMPTY || isDraw || !hover) return;
+  const { r, c } = hover;
+  if (inBoard(r, c) && board[r][c] === EMPTY) drawStone(r, c, turn, 0.43);
+}
+
+function drawWinLine() {
+  if (!winStart) return;
+  ctx.strokeStyle = "rgb(220,30,30)";
+  ctx.lineWidth = 5;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(gx(winStart[1]), gy(winStart[0]));
+  ctx.lineTo(gx(winEnd[1]), gy(winEnd[0]));
+  ctx.stroke();
+  ctx.lineWidth = 1;
+}
+
+function updateStatus() {
+  let msg;
+  if (winner === BLACK)      msg = "⚫ 흑 승리!";
+  else if (winner === WHITE) msg = "⚪ 백 승리!";
+  else if (isDraw)           msg = "무승부";
+  else msg = (turn === BLACK ? "⚫ 흑" : "⚪ 백") + " 차례 · " + (history.length + 1) + "수";
+  statusEl.textContent = msg;
+}
+
+// ------------------- 입력 -------------------
+// 화면 좌표 → 판 칸 (캔버스가 CSS로 축소돼도 맞도록 비율 보정)
+function cellFromEvent(e) {
+  const rect = canvas.getBoundingClientRect();
+  const x = (e.clientX - rect.left) * (SIZE / rect.width);
+  const y = (e.clientY - rect.top) * (SIZE / rect.height);
+  return { r: Math.round((y - MARGIN) / CELL), c: Math.round((x - MARGIN) / CELL) };
+}
+
+canvas.addEventListener("mousemove", e => { hover = cellFromEvent(e); render(); });
+canvas.addEventListener("mouseleave", () => { hover = null; render(); });
+
+canvas.addEventListener("click", e => {
+  if (winner !== EMPTY || isDraw) return;
+  const { r, c } = cellFromEvent(e);
+  if (!inBoard(r, c) || board[r][c] !== EMPTY) return;
+
+  board[r][c] = turn;
+  history.push([r, c]);
+
+  if (checkWin(r, c))            winner = turn;
+  else if (history.length === N * N) isDraw = true;
+  else                           turn = turn === BLACK ? WHITE : BLACK;
+  render();
+});
+
+document.addEventListener("keydown", e => {
+  if (e.key === "r" || e.key === "R") resetGame();
+  else if (e.key === "u" || e.key === "U" || e.key === "Backspace") { e.preventDefault(); undo(); }
+});
+document.getElementById("undoBtn").onclick = undo;
+document.getElementById("resetBtn").onclick = resetGame;
+
+function undo() {
+  if (history.length === 0) return;
+  const [r, c] = history.pop();
+  turn = board[r][c];          // 무른 돌의 주인이 다시 둔다
+  board[r][c] = EMPTY;
+  winner = EMPTY;
+  isDraw = false;
+  winStart = winEnd = null;
+  render();
+}
+
+// ------------------- 승리 판정 -------------------
+function checkWin(r, c) {
+  const me = board[r][c];
+  const dirs = [[0, 1], [1, 0], [1, 1], [1, -1]];   // 가로, 세로, ↘, ↙
+  for (const [dr, dc] of dirs) {
+    let count = 1, r1 = r, c1 = c, r2 = r, c2 = c;
+    while (inBoard(r2 + dr, c2 + dc) && board[r2 + dr][c2 + dc] === me) { r2 += dr; c2 += dc; count++; }
+    while (inBoard(r1 - dr, c1 - dc) && board[r1 - dr][c1 - dc] === me) { r1 -= dr; c1 -= dc; count++; }
+    if (count >= 5) { winStart = [r1, c1]; winEnd = [r2, c2]; return true; }
+  }
+  return false;
+}
+
+resetGame();
+</script>
+</body>
+</html>
